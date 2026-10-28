@@ -81,3 +81,13 @@ FLAGS
 NOTES
     You can also use flags syntax for POSITIONAL ARGUMENTS
 ```
+
+### Analyze the dump
+
+Unlicense doesn't devirtualize code protected with Themida's VM or mutation
+macros. To find which parts of a dump still depend on Themida, open the dump in
+IDA and run `scripts/ida_find_themida_refs.py` (IDA 7.4 or later with
+IDAPython) or `scripts/ida_find_themida_refs.idc` (IDA 7.0 or later, no Python
+needed) with File > Script file... It lists every jump, call and code pointer from the
+`.text` section into Themida's sections (likely VM entries, mutated code,
+SDK calls...) and saves them as a CSV file next to the IDB.
