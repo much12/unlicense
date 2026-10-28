@@ -6,7 +6,7 @@ from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs  # type: ignore
 
 from .imports import find_wrapped_imports
 from .dump_utils import dump_pe, pointer_size_to_fmt
-from .emulation import resolve_wrapped_api
+from .emulation import resolve_wrapped_api_with_fallback
 from .process_control import Architecture, ProcessController, MemoryRange, QueryProcessMemoryError
 
 LOG = logging.getLogger(__name__)
@@ -260,6 +260,9 @@ def _unwrap_iat(
     new_iat_data = bytearray()
     resolved_import_count = 0
     successive_failures = 0
+    # Fallback resolutions not confirmed by a subsequent resolution yet (also
+    # counted in `successive_failures`)
+    pending_fallbacks = 0
     last_resolution_offset = 0
     for current_addr in range(iat_range.base, iat_range.base + iat_range.size,
                               process_controller.page_size):
@@ -273,24 +276,34 @@ def _unwrap_iat(
                 page_data[i:i + process_controller.pointer_size])[0]
             # Wrappers are located in one of the module's section
             if in_main_module(wrapper_start):
-                resolved_api = resolve_wrapped_api(wrapper_start,
-                                                   process_controller)
-                if resolved_api not in exports_dict:
+                resolved_api, fallback_api = resolve_wrapped_api_with_fallback(
+                    wrapper_start, process_controller)
+                if resolved_api in exports_dict:
+                    LOG.debug("Resolved API: %s -> %s", hex(wrapper_start),
+                              hex(resolved_api))
+                    new_iat_data += struct.pack(ptr_format, resolved_api)
+                    resolved_import_count += 1 + pending_fallbacks
+                    last_resolution_offset = len(new_iat_data)
+                    if successive_failures > pending_fallbacks:
+                        LOG.warning(
+                            "A resolved API wasn't an export, "
+                            "it's been replaced with 'kernel32.ExitProcess'.")
+                    successive_failures = 0
+                    pending_fallbacks = 0
+                elif fallback_api in exports_dict:
+                    # Note: Pointers past the end of the IAT can look like
+                    # call-style wrappers too, so this is only kept if a
+                    # subsequent import is resolved.
+                    LOG.debug("Tentatively resolved API: %s -> %s",
+                              hex(wrapper_start), hex(fallback_api))
+                    new_iat_data += struct.pack(ptr_format, fallback_api)
+                    successive_failures += 1
+                    pending_fallbacks += 1
+                else:
                     successive_failures += 1
                     # Note: When TLS callbacks are used, `kernel32.ExitProcess`
                     # is hooked via the IAT and thus might not resolved properly.
                     new_iat_data += struct.pack(ptr_format, exit_process_addr)
-                else:
-                    LOG.debug("Resolved API: %s -> %s", hex(wrapper_start),
-                              hex(resolved_api))
-                    new_iat_data += struct.pack(ptr_format, resolved_api)
-                    resolved_import_count += 1
-                    last_resolution_offset = len(new_iat_data)
-                    if successive_failures > 0:
-                        LOG.warning(
-                            "A resolved API wasn't an export, "
-                            "it's been replaced with 'kernel32.ExitProcess'.")
-                        successive_failures = 0
 
                 # Dumb check to detect the "end" of the IAT
                 if resolved_api is None and successive_failures >= IAT_MAX_SUCCESSIVE_FAILURES:
@@ -306,13 +319,14 @@ def _unwrap_iat(
             elif wrapper_start in exports_dict:
                 # Not wrapped, add as is
                 new_iat_data += struct.pack(ptr_format, wrapper_start)
-                resolved_import_count += 1
+                resolved_import_count += 1 + pending_fallbacks
                 last_resolution_offset = len(new_iat_data)
-                if successive_failures > 0:
+                if successive_failures > pending_fallbacks:
                     LOG.warning(
                         "A resolved API wasn't an export, "
                         "it's been replaced with 'kernel32.ExitProcess'.")
-                    successive_failures = 0
+                successive_failures = 0
+                pending_fallbacks = 0
             else:
                 # Junk pointer (most likely null). Keep for alignment
                 new_iat_data += struct.pack(ptr_format, wrapper_start)

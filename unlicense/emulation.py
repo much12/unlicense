@@ -21,6 +21,25 @@ def resolve_wrapped_api(
         wrapper_start_addr: int,
         process_controller: ProcessController,
         expected_ret_addr: Optional[int] = None) -> Optional[int]:
+    resolved_api, _ = resolve_wrapped_api_with_fallback(
+        wrapper_start_addr, process_controller, expected_ret_addr)
+    return resolved_api
+
+
+def resolve_wrapped_api_with_fallback(
+    wrapper_start_addr: int,
+    process_controller: ProcessController,
+    expected_ret_addr: Optional[int] = None
+) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Returns a tuple containing the resolved API (or None) and, when emulation
+    failed, the API the wrapper called and that never returned (or None).
+
+    Note: Some WinLicense 3.x wrappers `call` the API instead of jumping to it.
+    Emulating the API itself can then fail (e.g., because our TEB/PEB are
+    mostly empty). Regular functions calling APIs look the same though, so
+    this fallback API is only a candidate that callers have to validate.
+    """
     arch = process_controller.architecture
     if arch == Architecture.X86_32:
         uc_arch = UC_ARCH_X86
@@ -70,7 +89,7 @@ def resolve_wrapped_api(
         else:
             stop_on_ret_addr = expected_ret_addr
         # Tracks the last API called directly from the main module that
-        # hasn't returned yet (used as a fallback if emulation fails)
+        # hasn't returned yet (fallback candidate if emulation fails)
         pending_call: Dict[str, int] = {}
         uc.hook_add(UC_HOOK_MEM_UNMAPPED,
                     _unicorn_hook_unmapped,
@@ -86,7 +105,7 @@ def resolve_wrapped_api(
         pc = uc.reg_read(result_register)
         assert isinstance(pc, int)
 
-        return pc
+        return pc, None
     except UcError as e:
         LOG.debug("ERROR: %s", str(e))
         pc = uc.reg_read(pc_register)
@@ -98,17 +117,7 @@ def resolve_wrapped_api(
         LOG.debug("PC=%s", hex(pc))
         LOG.debug("SP=%s", hex(sp))
         LOG.debug("BP=%s", hex(bp))
-        if "api_addr" in pending_call:
-            # Note: Some WinLicense 3.x wrappers `call` the API instead of
-            # jumping to it. Emulating the API itself can fail (e.g., because
-            # our TEB/PEB are mostly empty), in which case the API that was
-            # called by the wrapper and never returned is the wrapped one.
-            api_addr = pending_call["api_addr"]
-            LOG.debug(
-                "Emulation failed inside API called by the wrapper, "
-                "assuming it's the wrapped API: %s", hex(api_addr))
-            return api_addr
-        return None
+        return None, pending_call.get("api_addr")
 
 
 def _setup_teb_x86(uc: Uc, process_info: ProcessController) -> None:
