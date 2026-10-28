@@ -1,12 +1,16 @@
 # Prebuilt executables
 
-Standalone `unlicense.exe` builds of commit `0d36a4d` (`main`), which includes
-the fix for call-style wrapped imports in Themida/WinLicense 3.x.
+Standalone `unlicense.exe` builds of commit `c201914`, which includes the fix
+for call-style wrapped imports in Themida/WinLicense 3.x.
+
+Note: builds of `0d36a4d` (the previous version of this folder) could go past
+the end of the IAT and overwrite the data following it. Don't use dumps made
+with them.
 
 | File | Architecture | Use for | SHA-256 |
 |---|---|---|---|
-| `x86/unlicense.exe` | 32-bit (PE32) | 32-bit targets | `474855fd96eb75d6488112c737f2def86af69b31a714c0adcfc41d3908ff6209` |
-| `x64/unlicense.exe` | 64-bit (PE32+) | 64-bit targets | `958941ad29393b1f23448bb05aea194be6175796669585e1b1a48813507e93f1` |
+| `x86/unlicense.exe` | 32-bit (PE32) | 32-bit targets | `14aa6c74c7f4fe22c7ba527ac49c57e732a29772f571dfc8d6edab216ce79766` |
+| `x64/unlicense.exe` | 64-bit (PE32+) | 64-bit targets | `0ed5ddca31454af3b0972e603060cab9ee94abff1c67943bfb3dd7376b0527f3` |
 
 Use the build matching the target's architecture: 32-bit targets must be
 dumped with the 32-bit (`x86`) build.
