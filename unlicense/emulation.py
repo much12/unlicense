@@ -69,12 +69,16 @@ def resolve_wrapped_api(
             stop_on_ret_addr = STACK_MAGIC_RET_ADDR
         else:
             stop_on_ret_addr = expected_ret_addr
+        # Tracks the last API called directly from the main module that
+        # hasn't returned yet (used as a fallback if emulation fails)
+        pending_call: Dict[str, int] = {}
         uc.hook_add(UC_HOOK_MEM_UNMAPPED,
                     _unicorn_hook_unmapped,
                     user_data=process_controller)
         uc.hook_add(UC_HOOK_BLOCK,
                     _unicorn_hook_block,
-                    user_data=(process_controller, stop_on_ret_addr))
+                    user_data=(process_controller, stop_on_ret_addr,
+                               pending_call))
 
         uc.emu_start(wrapper_start_addr, wrapper_start_addr + 1024)
 
@@ -94,6 +98,16 @@ def resolve_wrapped_api(
         LOG.debug("PC=%s", hex(pc))
         LOG.debug("SP=%s", hex(sp))
         LOG.debug("BP=%s", hex(bp))
+        if "api_addr" in pending_call:
+            # Note: Some WinLicense 3.x wrappers `call` the API instead of
+            # jumping to it. Emulating the API itself can fail (e.g., because
+            # our TEB/PEB are mostly empty), in which case the API that was
+            # called by the wrapper and never returned is the wrapped one.
+            api_addr = pending_call["api_addr"]
+            LOG.debug(
+                "Emulation failed inside API called by the wrapper, "
+                "assuming it's the wrapped API: %s", hex(api_addr))
+            return api_addr
         return None
 
 
@@ -155,9 +169,10 @@ def _unicorn_hook_unmapped(uc: Uc, _access: Any, address: int, _size: int,
         return False
 
 
-def _unicorn_hook_block(uc: Uc, address: int, _size: int,
-                        user_data: Tuple[ProcessController, int]) -> None:
-    process_controller, stop_on_ret_addr = user_data
+def _unicorn_hook_block(
+        uc: Uc, address: int, _size: int,
+        user_data: Tuple[ProcessController, int, Dict[str, int]]) -> None:
+    process_controller, stop_on_ret_addr, pending_call = user_data
     ptr_size = process_controller.pointer_size
     arch = process_controller.architecture
     if arch == Architecture.X86_32:
@@ -170,6 +185,10 @@ def _unicorn_hook_block(uc: Uc, address: int, _size: int,
         result_register = UC_X86_REG_RAX
     else:
         raise NotImplementedError(f"Unsupported architecture: {arch}")
+
+    if pending_call.get("ret_addr") == address:
+        # Pending API call returned to the wrapper
+        pending_call.clear()
 
     exports_dict = process_controller.enumerate_exported_functions()
     if address in exports_dict:
@@ -216,6 +235,13 @@ def _unicorn_hook_block(uc: Uc, address: int, _size: int,
             # Set next address
             uc.reg_write(pc_register, ret_addr)
             return
+        if pending_call.get("ret_addr") != ret_addr and any(
+                m_range.contains(ret_addr)
+                for m_range in process_controller.main_module_ranges):
+            # API called directly by the wrapper, keep track of it (forwarding
+            # stubs tail-jump with the same return address and are ignored)
+            pending_call["api_addr"] = address
+            pending_call["ret_addr"] = ret_addr
 
 
 def _is_no_return_api(api_name: str) -> bool:

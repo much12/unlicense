@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- Resolve Themida/Winlicense 3.x wrapped imports that `call` the API instead of jumping to it, when emulating the API itself fails
 
 ## [0.4.0] - 2023-08-14
 ### Added
