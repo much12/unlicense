@@ -1,16 +1,20 @@
 # Prebuilt executables
 
-Standalone `unlicense.exe` builds of commit `c201914`, which includes the fix
-for call-style wrapped imports in Themida/WinLicense 3.x.
+Standalone `unlicense.exe` builds of commit `bb5e250`, which handles
+Themida/WinLicense 3.x `ExitProcess` wrappers that call `SetCurrentDirectoryW`
+to fool emulation.
 
-Note: builds of `0d36a4d` (the previous version of this folder) could go past
-the end of the IAT and overwrite the data following it. Don't use dumps made
-with them.
+Note: earlier builds from this folder are affected by bugs, don't use dumps
+made with them:
+- `0d36a4d` could go past the end of the IAT and overwrite the data following
+  it.
+- `0d36a4d` and `c201914` could resolve an `ExitProcess` import as
+  `SetCurrentDirectoryW`.
 
 | File | Architecture | Use for | SHA-256 |
 |---|---|---|---|
-| `x86/unlicense.exe` | 32-bit (PE32) | 32-bit targets | `14aa6c74c7f4fe22c7ba527ac49c57e732a29772f571dfc8d6edab216ce79766` |
-| `x64/unlicense.exe` | 64-bit (PE32+) | 64-bit targets | `0ed5ddca31454af3b0972e603060cab9ee94abff1c67943bfb3dd7376b0527f3` |
+| `x86/unlicense.exe` | 32-bit (PE32) | 32-bit targets | `e8fd78373ade3271826d47f868735b04eb8a94d1d7a87e2583526f590f5291ac` |
+| `x64/unlicense.exe` | 64-bit (PE32+) | 64-bit targets | `069faf14db681109e2de0541c33e4c5793887f80d1e190355e007077a1b77d89` |
 
 Use the build matching the target's architecture: 32-bit targets must be
 dumped with the 32-bit (`x86`) build.
