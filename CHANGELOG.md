@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Add an IDAPython script (`scripts/ida_find_themida_refs.py`) listing references from the dump's `.text` section into Themida's sections
+
 ### Fixed
 - Handle Themida/Winlicense 3.x `ExitProcess` wrappers that call `SetCurrentDirectoryW` to fool emulation-based unwrappers
 
