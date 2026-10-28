@@ -2,8 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
-- Resolve Themida/Winlicense 3.x wrapped imports that `call` the API instead of jumping to it, when emulating the API itself fails
-  (only kept when a subsequent import is resolved, to avoid going past the end of the IAT)
+- Handle Themida/Winlicense 3.x `ExitProcess` wrappers that call `SetCurrentDirectoryW` to fool emulation-based unwrappers
 
 ## [0.4.0] - 2023-08-14
 ### Added

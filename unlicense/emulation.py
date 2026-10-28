@@ -21,25 +21,6 @@ def resolve_wrapped_api(
         wrapper_start_addr: int,
         process_controller: ProcessController,
         expected_ret_addr: Optional[int] = None) -> Optional[int]:
-    resolved_api, _ = resolve_wrapped_api_with_fallback(
-        wrapper_start_addr, process_controller, expected_ret_addr)
-    return resolved_api
-
-
-def resolve_wrapped_api_with_fallback(
-    wrapper_start_addr: int,
-    process_controller: ProcessController,
-    expected_ret_addr: Optional[int] = None
-) -> Tuple[Optional[int], Optional[int]]:
-    """
-    Returns a tuple containing the resolved API (or None) and, when emulation
-    failed, the API the wrapper called and that never returned (or None).
-
-    Note: Some WinLicense 3.x wrappers `call` the API instead of jumping to it.
-    Emulating the API itself can then fail (e.g., because our TEB/PEB are
-    mostly empty). Regular functions calling APIs look the same though, so
-    this fallback API is only a candidate that callers have to validate.
-    """
     arch = process_controller.architecture
     if arch == Architecture.X86_32:
         uc_arch = UC_ARCH_X86
@@ -88,16 +69,12 @@ def resolve_wrapped_api_with_fallback(
             stop_on_ret_addr = STACK_MAGIC_RET_ADDR
         else:
             stop_on_ret_addr = expected_ret_addr
-        # Tracks the last API called directly from the main module that
-        # hasn't returned yet (fallback candidate if emulation fails)
-        pending_call: Dict[str, int] = {}
         uc.hook_add(UC_HOOK_MEM_UNMAPPED,
                     _unicorn_hook_unmapped,
                     user_data=process_controller)
         uc.hook_add(UC_HOOK_BLOCK,
                     _unicorn_hook_block,
-                    user_data=(process_controller, stop_on_ret_addr,
-                               pending_call))
+                    user_data=(process_controller, stop_on_ret_addr))
 
         uc.emu_start(wrapper_start_addr, wrapper_start_addr + 1024)
 
@@ -105,7 +82,7 @@ def resolve_wrapped_api_with_fallback(
         pc = uc.reg_read(result_register)
         assert isinstance(pc, int)
 
-        return pc, None
+        return pc
     except UcError as e:
         LOG.debug("ERROR: %s", str(e))
         pc = uc.reg_read(pc_register)
@@ -117,7 +94,7 @@ def resolve_wrapped_api_with_fallback(
         LOG.debug("PC=%s", hex(pc))
         LOG.debug("SP=%s", hex(sp))
         LOG.debug("BP=%s", hex(bp))
-        return None, pending_call.get("api_addr")
+        return None
 
 
 def _setup_teb_x86(uc: Uc, process_info: ProcessController) -> None:
@@ -178,10 +155,9 @@ def _unicorn_hook_unmapped(uc: Uc, _access: Any, address: int, _size: int,
         return False
 
 
-def _unicorn_hook_block(
-        uc: Uc, address: int, _size: int,
-        user_data: Tuple[ProcessController, int, Dict[str, int]]) -> None:
-    process_controller, stop_on_ret_addr, pending_call = user_data
+def _unicorn_hook_block(uc: Uc, address: int, _size: int,
+                        user_data: Tuple[ProcessController, int]) -> None:
+    process_controller, stop_on_ret_addr = user_data
     ptr_size = process_controller.pointer_size
     arch = process_controller.architecture
     if arch == Architecture.X86_32:
@@ -194,10 +170,6 @@ def _unicorn_hook_block(
         result_register = UC_X86_REG_RAX
     else:
         raise NotImplementedError(f"Unsupported architecture: {arch}")
-
-    if pending_call.get("ret_addr") == address:
-        # Pending API call returned to the wrapper
-        pending_call.clear()
 
     exports_dict = process_controller.enumerate_exported_functions()
     if address in exports_dict:
@@ -244,13 +216,6 @@ def _unicorn_hook_block(
             # Set next address
             uc.reg_write(pc_register, ret_addr)
             return
-        if pending_call.get("ret_addr") != ret_addr and any(
-                m_range.contains(ret_addr)
-                for m_range in process_controller.main_module_ranges):
-            # API called directly by the wrapper, keep track of it (forwarding
-            # stubs tail-jump with the same return address and are ignored)
-            pending_call["api_addr"] = address
-            pending_call["ret_addr"] = ret_addr
 
 
 def _is_no_return_api(api_name: str) -> bool:
@@ -259,12 +224,15 @@ def _is_no_return_api(api_name: str) -> bool:
 
 
 def _is_bogus_api(api_name: str) -> bool:
-    BOGUS_APIS = ["Sleep"]
+    # Note: Some `ExitProcess` wrappers call `SetCurrentDirectoryW`, which
+    # can't be emulated with our mostly empty TEB/PEB
+    BOGUS_APIS = ["Sleep", "SetCurrentDirectoryW"]
     return api_name in BOGUS_APIS
 
 
 def _simulate_bogus_api(api_name: str) -> Tuple[int, int]:
     BOGUS_API_MAP: Dict[str, Tuple[int, int]] = {
         "Sleep": (0, 1),
+        "SetCurrentDirectoryW": (1, 1),
     }
     return BOGUS_API_MAP[api_name]
